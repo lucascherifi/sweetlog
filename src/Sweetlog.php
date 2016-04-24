@@ -6,6 +6,8 @@ use DateInterval;
 use DateTime;
 use Doctrine\Common\Collections\ArrayCollection;
 use Exception;
+use Symfony\Component\Console\Helper\Table;
+use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Process\Process;
@@ -31,6 +33,15 @@ class Sweetlog
     /** @var ArrayCollection */
     private $commits;
 
+    /** @var ArrayCollection */
+    private $commitsToModify;
+
+    /** @var InputInterface */
+    private $input;
+
+    /** @var OutputInterface */
+    private $output;
+
     /**
      * Sweetlog constructor.
      *
@@ -46,11 +57,15 @@ class Sweetlog
     }
 
     /**
-     * @param SymfonyStyle $io
+     * @param SymfonyStyle    $io
+     * @param InputInterface  $input
+     * @param OutputInterface $output
      */
-    public function setIo($io)
+    public function setIo($io, InputInterface $input, OutputInterface $output)
     {
         $this->io = $io;
+        $this->input = $input;
+        $this->output = $output;
     }
 
     public function run()
@@ -145,19 +160,19 @@ class Sweetlog
 
     private function modifyDisallowedCommits()
     {
-        $commitsToModify = [];
+        $this->commitsToModify = [];
         foreach ($this->commits as $key => &$commit) {
             if ($this->isWorkTime($commit['date'])) {
                 if ($key > 0) {
                     $this->makeTheCommitAllowed($commit, $key);
-                    $commitsToModify[] = $commit;
+                    $this->commitsToModify[] = $commit;
                 } else {
                     $this->io->warning('commit ' . $commit['commit'] . ' will not be modify because we do not know the previous date (from filter configuration)');
                 }
             }
         }
-        $this->io->comment(count($commitsToModify) . ' commit(s) to modify');
-        dump($commitsToModify);
+        $this->io->comment(count($this->commitsToModify) . ' commit(s) to modify');
+        $this->displayCommitsToModify();
     }
 
     private function isWorkTime(DateTime $date)
@@ -165,7 +180,7 @@ class Sweetlog
         $weekDay = $date->format('w');
         if (in_array($weekDay, [1, 2, 3, 4, 5])) {
             $hour = $date->format('H');
-            if ($hour >= 9 && $hour <= 19) {
+            if ($hour >= 9 && $hour <= 18) {
                 //dump($hour);
                 return true;
             }
@@ -207,8 +222,30 @@ class Sweetlog
         }
         throw new Exception(
             'No previous allowed commit found for this periode (' .
-            $this->commits[$key]['commit'] . ', ' . $this->commits[$key]['date']->format('Y-m-d H:i:s') . ', ' .
+            $this->commits[$key]['commit'] . ', ' . $this->formatHumanDate($this->commits[$key]['date']) . ', ' .
             $key . ')'
         );
+    }
+
+    private function displayCommitsToModify()
+    {
+        $data = [];
+        foreach ($this->commitsToModify as $commitsToModify) {
+            $data[] = [
+                substr($commitsToModify['commit'], 0, 7),
+                substr($commitsToModify['message'], 0, 50) . (strlen($commitsToModify['message']) > 50 ? '...' : ''),
+                $this->formatHumanDate($commitsToModify['date']),
+                $this->formatHumanDate($commitsToModify['date_modified']),
+            ];
+        }
+
+        $table = new Table($this->output);
+        $table->setHeaders(['Hash', 'Message', 'Date', 'Fixed date'])->setRows($data);
+        $table->render();
+    }
+
+    private function formatHumanDate(DateTime $date)
+    {
+        return strftime('%a %e %b %H:%M:%S', $date->getTimestamp());
     }
 }

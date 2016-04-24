@@ -64,7 +64,7 @@ class RunCommand extends Command
         $io->comment('Workspace used: ' . $workspacePath);
 
         $sweetlog = new Sweetlog($workspacePath, $force, $since);
-        $sweetlog->setIo($io);
+        $sweetlog->setIo($io, $input, $output);
         $sweetlog->run();
     }
 }

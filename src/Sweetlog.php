@@ -73,15 +73,26 @@ class Sweetlog
         $this->commits = $this->gitLogToArray();
         $this->io->comment(count($this->commits) . ' commit(s) since "' . $this->since . '"');
         $this->buildToFixCommitsList();
-        $this->io->comment(count($this->commitsToModify) . ' commit(s) to modify');
         $this->displayCommitsToModify();
-        // TODO modify commit if forced
+        if ($this->force) {
+            foreach ($this->commitsToModify as $key => $commitsToModify) {
+                $this->io->comment(
+                    '[' . $key . '] Applying new date for ' . substr($commitsToModify['commit'], 0, 7) .
+                    ' ' . $this->formatHumanDate($commitsToModify['author_date']) . ' => ' .
+                    ' ' . $this->formatHumanDate($commitsToModify['author_date_modified']) .
+                    ' ...'
+                );
+                $this->applyNewDate($commitsToModify);
+                $this->pushForce();
+            }
+            $this->io->success('All dates are OK.');
+        }
     }
 
     private function gitLogToArray()
     {
         $cmd = 'git log' .
-            ' --pretty=format:\'{"commit": "%H","author": "%an","author_email": "%ae","date": "%ad","message": "%f"},\'' .
+            ' --pretty=format:\'{"commit": "%H","author": "%an","author_email": "%ae","author_date": "%ad","committer_date": "%cd","message": "%f"},\'' .
             ' --since=' . $this->since .
             ' --reverse' .
             ' ' . $this->workspacePath;
@@ -89,7 +100,8 @@ class Sweetlog
         $result = '[' . substr($result, 0, -1) . ']';
         $result = json_decode($result, true);
         $result = (new ArrayCollection($result))->map(function ($commit) {
-            $commit['date'] = new DateTime($commit['date']);
+            $commit['author_date'] = new DateTime($commit['author_date']);
+            $commit['committer_date'] = new DateTime($commit['committer_date']);
 
             return $commit;
         });
@@ -135,37 +147,11 @@ class Sweetlog
         return $process->getIncrementalOutput();
     }
 
-    /**
-     * @param DateTime $date
-     * @param integer  $days
-     *
-     * @return DateTime
-     */
-    private function sub(DateTime $date, $days)
-    {
-        $date = clone $date;
-
-        return $date->sub(new DateInterval('P' . $days . 'D'));
-    }
-
-    /**
-     * @param DateTime $date
-     * @param integer  $days
-     *
-     * @return DateTime
-     */
-    private function add(DateTime $date, $days)
-    {
-        $date = clone $date;
-
-        return $date->add(new DateInterval('P' . $days . 'D'));
-    }
-
     private function buildToFixCommitsList()
     {
         $this->commitsToModify = [];
         foreach ($this->commits as $key => &$commit) {
-            if ($this->isWorkTime($commit['date'])) {
+            if ($this->isWorkTime($commit['author_date'])) {
                 if ($key > 0) {
                     $this->makeTheCommitAllowed($commit, $key);
                     $this->commitsToModify[] = $commit;
@@ -197,9 +183,10 @@ class Sweetlog
      */
     private function makeTheCommitAllowed(&$commit, $key)
     {
-        $previousAllowedCommitDate = $this->getPreviousAllowedCommitDate($key);
-        $previousAllowedCommitDate = $previousAllowedCommitDate->modify('+' . rand(0, 60) . ' seconds');
-        $commit['date_modified'] = $previousAllowedCommitDate;
+        $previousAllowedCommitDate = $this->getPreviousAllowedCommitDate($key, 'author');
+        $previousAllowedCommitDate = $previousAllowedCommitDate->modify('+' . rand(10, 50) . ' seconds');
+        $commit['author_date_modified'] = $previousAllowedCommitDate;
+        $commit['committer_date_modified'] = $previousAllowedCommitDate;
     }
 
     /**
@@ -208,43 +195,76 @@ class Sweetlog
      * @return DateTime
      * @throws Exception
      */
-    private function getPreviousAllowedCommitDate($key)
+    private function getPreviousAllowedCommitDate($key, $type)
     {
         for ($i = $key; $i >= 0; $i--) {
-            $dateKey = 'date';
-            if (isset($this->commits[$i]['date_modified'])) {
+            $dateKey = $type . '_date';
+            if (isset($this->commits[$i][$type . '_date_modified'])) {
 
-                return clone $this->commits[$i]['date_modified'];
+                return clone $this->commits[$i][$type . '_date_modified'];
             } elseif (!$this->isWorkTime($this->commits[$i][$dateKey])) {
-                return clone $this->commits[$i]['date'];
+                return clone $this->commits[$i][$type . '_date'];
             }
         }
         throw new Exception(
             'No previous allowed commit found for this periode (' .
-            $this->commits[$key]['commit'] . ', ' . $this->formatHumanDate($this->commits[$key]['date']) . ', ' .
+            $this->commits[$key]['commit'] . ', ' . $this->formatHumanDate($this->commits[$key][$type . '_date']) . ', ' .
             $key . ')'
         );
     }
 
     private function displayCommitsToModify()
     {
-        $data = [];
-        foreach ($this->commitsToModify as $commitsToModify) {
-            $data[] = [
-                substr($commitsToModify['commit'], 0, 7),
-                substr($commitsToModify['message'], 0, 50) . (strlen($commitsToModify['message']) > 50 ? '...' : ''),
-                $this->formatHumanDate($commitsToModify['date']),
-                $this->formatHumanDate($commitsToModify['date_modified']),
-            ];
-        }
+        $this->io->comment(count($this->commitsToModify) . ' commit(s) to modify');
+        if (count($this->commitsToModify)) {
+            $data = [];
+            foreach ($this->commitsToModify as $commitsToModify) {
+                if ($commitsToModify['committer_date'] == $commitsToModify['author_date']) {
+                    $committerDate = 'identical';
+                } else {
+                    $committerDate = $this->formatHumanDate($commitsToModify['committer_date']);
+                }
 
-        $table = new Table($this->output);
-        $table->setHeaders(['Hash', 'Message', 'Date', 'Fixed date'])->setRows($data);
-        $table->render();
+                $data[] = [
+                    substr($commitsToModify['commit'], 0, 7),
+                    substr($commitsToModify['message'], 0, 45) . (strlen($commitsToModify['message']) > 45 ? '...' : ''),
+                    $this->formatHumanDate($commitsToModify['author_date']),
+                    $this->formatHumanDate($commitsToModify['author_date_modified']),
+                    $committerDate,
+                    $this->formatHumanDate($commitsToModify['committer_date_modified']),
+                ];
+            }
+
+            $table = new Table($this->output);
+            $table->setHeaders([
+                'Hash', 'Message', 'Author Date', 'Author date modified', 'Com. Date', 'Com. Date modified',
+            ])->setRows($data);
+            $table->render();
+        }
     }
 
     private function formatHumanDate(DateTime $date)
     {
         return strftime('%a %e %b %H:%M:%S', $date->getTimestamp());
+    }
+
+    private function applyNewDate($commit)
+    {
+        $hash = $commit['commit'];
+        $authorDate = $commit['author_date_modified']->format('r');
+        $committerDate = $commit['committer_date_modified']->format('r');
+        $cmd = 'git filter-branch -f --env-filter \
+    \'if [ $GIT_COMMIT = ' . $hash . ' ]
+     then
+         export GIT_AUTHOR_DATE="' . $authorDate . '"
+         export GIT_COMMITTER_DATE="' . $committerDate . '"
+     fi\'';
+        $this->execCmd($cmd);
+    }
+
+    private function pushForce()
+    {
+        $cmd = 'git push --force';
+        //$this->execCmd($cmd);
     }
 }

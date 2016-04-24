@@ -56,9 +56,8 @@ class Sweetlog
     public function run()
     {
         $this->commits = $this->gitLogToArray();
-        dump($this->commits);
         $this->io->comment(count($this->commits) . ' commit(s) since "' . $this->since . '"');
-        $commitsToModify = $this->checkCommitsToModify();
+        $this->modifyDisallowedCommits();
     }
 
     private function gitLogToArray()
@@ -144,7 +143,7 @@ class Sweetlog
         return $date->add(new DateInterval('P' . $days . 'D'));
     }
 
-    private function checkCommitsToModify()
+    private function modifyDisallowedCommits()
     {
         $commitsToModify = [];
         foreach ($this->commits as $key => &$commit) {
@@ -183,31 +182,27 @@ class Sweetlog
      */
     private function makeTheCommitAllowed(&$commit, $key)
     {
-        $previousAllowedCommit = $this->getPreviousAllowedCommit($key);
-        if (isset($previousAllowedCommit['date_modified'])) {
-            $newDate = clone $previousAllowedCommit['date_modified'];
-        } else {
-            $newDate = clone $previousAllowedCommit['date'];
-        }
-        /** @var $newDate DateTime */
-        $newDate->modify('+10 seconds');
-        $commit['date_modified'] = $newDate;
+        $previousAllowedCommitDate = $this->getPreviousAllowedCommitDate($key);
+        $previousAllowedCommitDate = $previousAllowedCommitDate->modify('+10 seconds');
+        $commit['date_modified'] = $previousAllowedCommitDate;
     }
 
     /**
      * @param $key
      *
-     * @return array
+     * @return DateTime
      * @throws Exception
      */
-    private function getPreviousAllowedCommit($key)
+    private function getPreviousAllowedCommitDate($key)
     {
-        for ($i = $key; $i <= 0; $i--) {
+        //$this->io->comment('key='.$key);
+        for ($i = $key; $i >= 0; $i--) {
+            //$this->io->comment($i);
             $dateKey = 'date';
             if (isset($this->commits[$i]['modified_date'])) {
-                return $this->commits[$i];
+                return clone $this->commits[$i]['modified_date'];
             } elseif (!$this->isWorkTime($this->commits[$i][$dateKey])) {
-                return $this->commits[$i];
+                return clone $this->commits[$i]['date'];
             }
         }
         throw new Exception(

@@ -1,0 +1,2 @@
+- Clone this project.
+- c install

@@ -30,7 +30,7 @@ class Sweetlog
      */
     private $since;
 
-    /** @var ArrayCollection */
+    /** @var array */
     private $commits;
 
     /** @var ArrayCollection */
@@ -72,7 +72,10 @@ class Sweetlog
     {
         $this->commits = $this->gitLogToArray();
         $this->io->comment(count($this->commits) . ' commit(s) since "' . $this->since . '"');
-        $this->modifyDisallowedCommits();
+        $this->buildToFixCommitsList();
+        $this->io->comment(count($this->commitsToModify) . ' commit(s) to modify');
+        $this->displayCommitsToModify();
+        // TODO modify commit if forced
     }
 
     private function gitLogToArray()
@@ -91,7 +94,7 @@ class Sweetlog
             return $commit;
         });
 
-        return $result;
+        return $result->toArray();
     }
 
     /**
@@ -158,7 +161,7 @@ class Sweetlog
         return $date->add(new DateInterval('P' . $days . 'D'));
     }
 
-    private function modifyDisallowedCommits()
+    private function buildToFixCommitsList()
     {
         $this->commitsToModify = [];
         foreach ($this->commits as $key => &$commit) {
@@ -171,8 +174,6 @@ class Sweetlog
                 }
             }
         }
-        $this->io->comment(count($this->commitsToModify) . ' commit(s) to modify');
-        $this->displayCommitsToModify();
     }
 
     private function isWorkTime(DateTime $date)
@@ -181,7 +182,6 @@ class Sweetlog
         if (in_array($weekDay, [1, 2, 3, 4, 5])) {
             $hour = $date->format('H');
             if ($hour >= 9 && $hour <= 18) {
-                //dump($hour);
                 return true;
             }
         }
@@ -198,7 +198,7 @@ class Sweetlog
     private function makeTheCommitAllowed(&$commit, $key)
     {
         $previousAllowedCommitDate = $this->getPreviousAllowedCommitDate($key);
-        $previousAllowedCommitDate = $previousAllowedCommitDate->modify('+10 seconds');
+        $previousAllowedCommitDate = $previousAllowedCommitDate->modify('+' . rand(0, 60) . ' seconds');
         $commit['date_modified'] = $previousAllowedCommitDate;
     }
 
@@ -210,12 +210,11 @@ class Sweetlog
      */
     private function getPreviousAllowedCommitDate($key)
     {
-        //$this->io->comment('key='.$key);
         for ($i = $key; $i >= 0; $i--) {
-            //$this->io->comment($i);
             $dateKey = 'date';
-            if (isset($this->commits[$i]['modified_date'])) {
-                return clone $this->commits[$i]['modified_date'];
+            if (isset($this->commits[$i]['date_modified'])) {
+
+                return clone $this->commits[$i]['date_modified'];
             } elseif (!$this->isWorkTime($this->commits[$i][$dateKey])) {
                 return clone $this->commits[$i]['date'];
             }

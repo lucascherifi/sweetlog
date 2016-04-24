@@ -2,6 +2,7 @@
 
 namespace Kasifi\Sweetlog\Command;
 
+use DateTime;
 use Exception;
 use Kasifi\Sweetlog\Sweetlog;
 use Symfony\Component\Console\Command\Command;
@@ -35,6 +36,18 @@ class RunCommand extends Command
                 '2.weeks'
             )
             ->addOption(
+                'only-one-commit',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'If set, on this commit will rewrite'
+            )
+            ->addOption(
+                'only-one-commit-date',
+                null,
+                InputOption::VALUE_REQUIRED,
+                'Required if only-one-commit has been set'
+            )
+            ->addOption(
                 'force',
                 null,
                 InputOption::VALUE_NONE,
@@ -63,8 +76,24 @@ class RunCommand extends Command
         $workspacePath = realpath($workspacePath);
         $io->comment('Workspace used: ' . $workspacePath);
 
-        $sweetlog = new Sweetlog($workspacePath, $force, $since);
+        $sweetlog = new Sweetlog($workspacePath, $force);
         $sweetlog->setIo($io, $input, $output);
-        $sweetlog->run();
+
+        $onlyOneCommit = $input->getOption('only-one-commit');
+        if ($onlyOneCommit) {
+            $input->getOption('only-one-commit');
+            $onlyOneCommitDate = $input->getOption('only-one-commit-date');
+            if (!$onlyOneCommitDate) {
+                throw new Exception('If only-one-commit is set, only-one-commit-date should be set too.');
+            }
+            try {
+                $newDate = DateTime::createFromFormat('Y-m-d H:i:s', $onlyOneCommitDate);
+            } catch (Exception $e) {
+                throw new Exception('Only-one-commit-date format should be as: Y-m-d H:i:s.');
+            }
+            $sweetlog->runOnlyOneCommit($onlyOneCommit, $newDate, $newDate);
+        } else {
+            $sweetlog->run($since);
+        }
     }
 }

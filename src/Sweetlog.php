@@ -47,13 +47,11 @@ class Sweetlog
      *
      * @param string  $workspacePath
      * @param boolean $force
-     * @param string  $since
      */
-    public function __construct($workspacePath, $force, $since)
+    public function __construct($workspacePath, $force)
     {
         $this->workspacePath = $workspacePath;
         $this->force = $force;
-        $this->since = $since;
     }
 
     /**
@@ -68,22 +66,32 @@ class Sweetlog
         $this->output = $output;
     }
 
-    public function run()
+    public function run($since)
     {
+        $this->since = $since;
         $this->commits = $this->gitLogToArray();
         $this->io->comment(count($this->commits) . ' commit(s) since "' . $this->since . '"');
         $this->buildToFixCommitsList();
         $this->displayCommitsToModify();
         if ($this->force) {
-            foreach ($this->commitsToModify as $key => $commitsToModify) {
+            while (count($this->commitsToModify)) {
+                $firstCommitToModify = $this->commitsToModify[0];
                 $this->io->comment(
-                    '[' . $key . '] Applying new date for ' . substr($commitsToModify['commit'], 0, 7) .
-                    ' ' . $this->formatHumanDate($commitsToModify['author_date']) . ' => ' .
-                    ' ' . $this->formatHumanDate($commitsToModify['author_date_modified']) .
+                    'Applying new date for ' . substr($firstCommitToModify['commit'], 0, 7) .
+                    ' ' . $this->formatHumanDate($firstCommitToModify['author_date']) . ' => ' .
+                    ' ' . $this->formatHumanDate($firstCommitToModify['author_date_modified']) .
                     ' ...'
                 );
-                $this->applyNewDate($commitsToModify);
+                $commitHash = $firstCommitToModify['commit'];
+                $authorDate = $firstCommitToModify['author_date_modified'];
+                $committerDate = $firstCommitToModify['committer_date_modified'];
+                $this->applyNewDate($commitHash, $authorDate, $committerDate);
                 $this->pushForce();
+                $this->commits = $this->gitLogToArray();
+                $this->buildToFixCommitsList();
+                if (count($this->commitsToModify)) {
+                    $this->io->comment('Still ' . count($this->commitsToModify) . ' commit(s) to modify...');
+                }
             }
             $this->io->success('All dates are OK.');
         }
@@ -156,7 +164,10 @@ class Sweetlog
                     $this->makeTheCommitAllowed($commit, $key);
                     $this->commitsToModify[] = $commit;
                 } else {
-                    $this->io->warning('commit ' . $commit['commit'] . ' will not be modify because we do not know the previous date (from filter configuration)');
+                    throw new Exception(
+                        'First commit ' . $commit['commit'] .
+                        ' of the list (from filter configuration) is not at a correct date. Please fix it before.'
+                    );
                 }
             }
         }
@@ -248,16 +259,13 @@ class Sweetlog
         return strftime('%a %e %b %H:%M:%S', $date->getTimestamp());
     }
 
-    private function applyNewDate($commit)
+    private function applyNewDate($commitHash, DateTime $newAuthorDate, DateTime $newCommitterDate)
     {
-        $hash = $commit['commit'];
-        $authorDate = $commit['author_date_modified']->format('r');
-        $committerDate = $commit['committer_date_modified']->format('r');
         $cmd = 'git filter-branch -f --env-filter \
-    \'if [ $GIT_COMMIT = ' . $hash . ' ]
+    \'if [ $GIT_COMMIT = ' . $commitHash . ' ]
      then
-         export GIT_AUTHOR_DATE="' . $authorDate . '"
-         export GIT_COMMITTER_DATE="' . $committerDate . '"
+         export GIT_AUTHOR_DATE="' . $newAuthorDate->format('r') . '"
+         export GIT_COMMITTER_DATE="' . $newCommitterDate->format('r') . '"
      fi\'';
         $this->execCmd($cmd);
     }
@@ -265,6 +273,13 @@ class Sweetlog
     private function pushForce()
     {
         $cmd = 'git push --force';
-        //$this->execCmd($cmd);
+        $this->execCmd($cmd, true);
+    }
+
+    public function runOnlyOneCommit($commitHash, DateTime $newAuthorDate, DateTime $newCommitterDate)
+    {
+        $this->io->comment('Updating commit ' . $commitHash . ' date to: ' . $this->formatHumanDate($newAuthorDate));
+        $this->applyNewDate($commitHash, $newAuthorDate, $newCommitterDate);
+        $this->pushForce();
     }
 }
